@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁磚計畫小工具 v8.9 - 標註優化版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body { background-color: #f1f5f9; font-family: 'Inter', 'Microsoft JhengHei', system-ui, sans-serif; }
+        .canvas-bg { background-color: #e2e8f0; background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 24px 24px; }
+        .panel { background: white; border-radius: 16px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; }
+        .tab-active { border-bottom: 4px solid #2563eb; color: #1e40af; font-weight: 800; background-color: #eff6ff; }
+        #mainCanvas { touch-action: none; border-radius: 8px; cursor: crosshair; }
+        .ortho-active { background-color: #f59e0b !important; color: white !important; }
+        #pdf-header-template { display: none; }
+        input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+    </style>
+</head>
+<body class="p-4 md:p-6">
+    <div class="max-w-[1600px] mx-auto">
+        <header class="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-4">
+            <div>
+                <h1 class="text-2xl font-black text-slate-900 tracking-tight">磁磚計畫 PRO <span class="text-blue-600">v8.9</span></h1>
+                <p class="text-slate-500 text-xs font-bold">自動邊界尺寸標註與點位標示系統</p>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-4">
+                <input type="text" id="header-work-location" placeholder="輸入施工位置" class="bg-white px-4 py-2 rounded-xl border text-sm font-bold w-40 outline-blue-500">
+                <button onclick="exportFullPDF()" id="btn-pdf" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all text-sm">
+                    <span id="pdf-text">匯出 PDF 報告</span>
+                </button>
+                
+                <div class="flex gap-3">
+                    <div class="bg-blue-600 text-white px-4 py-2 rounded-xl flex gap-4 items-center shadow-lg">
+                        <div class="border-r border-blue-400/50 pr-4 text-center">
+                            <p class="text-[9px] text-blue-200 font-bold uppercase">地磚面積</p>
+                            <p class="text-lg font-black"><span id="header-floor-area">0</span> <small class="text-[10px]">m²</small></p>
+                        </div>
+                        <div class="border-r border-blue-400/50 pr-4 text-center">
+                            <p class="text-[9px] text-blue-200 font-bold uppercase">地損耗</p>
+                            <p class="text-lg font-black" id="header-floor-loss">0%</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-[9px] text-blue-100 font-bold uppercase">地磚總量</p>
+                            <p class="text-xl font-black" id="grand-floor-count">0</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-emerald-600 text-white px-4 py-2 rounded-xl flex gap-4 items-center shadow-lg">
+                        <div class="border-r border-emerald-400/50 pr-4 text-center">
+                            <p class="text-[9px] text-emerald-100 font-bold uppercase">壁磚面積</p>
+                            <p class="text-lg font-black"><span id="header-wall-area">0</span> <small class="text-[10px]">m²</small></p>
+                        </div>
+                        <div class="border-r border-emerald-400/50 pr-4 text-center">
+                            <p class="text-[9px] text-emerald-100 font-bold uppercase">壁損耗</p>
+                            <p class="text-lg font-black" id="header-wall-loss">0%</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-[9px] text-emerald-50 font-bold uppercase">壁磚總量</p>
+                            <p class="text-xl font-black" id="grand-wall-count">0</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <!-- 左側控制面板 -->
+            <div class="lg:col-span-3 space-y-4">
+                <div class="panel p-4">
+                    <h3 class="font-bold text-slate-800 mb-3 border-b pb-1 text-sm">磁磚規格</h3>
+                    <div class="space-y-4">
+                        <div class="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-blue-700 text-xs font-black">地磚 (cm)</span>
+                                <div class="text-[10px] text-blue-500">損耗 <input type="number" id="loss-floor" value="0" class="w-8 bg-transparent font-bold" oninput="updateAll()">%</div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 mb-2">
+                                <input type="number" id="tile-f-w" value="60" class="border rounded p-1 text-xs" title="寬" oninput="updateAll()">
+                                <input type="number" id="tile-f-h" value="60" class="border rounded p-1 text-xs" title="高" oninput="updateAll()">
+                                <input type="number" id="tile-f-j" value="0.3" step="0.1" class="border rounded p-1 text-xs" title="縫" oninput="updateAll()">
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label class="text-[10px] text-blue-600 font-bold">交丁比例</label>
+                                <select id="layout-floor" class="text-[10px] border rounded p-1 w-full" onchange="updateAll()">
+                                    <option value="1">對縫 (1/1)</option>
+                                    <option value="0.5">半對 (1/2)</option>
+                                    <option value="0.333">三一 (1/3)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-emerald-700 text-xs font-black">壁磚 (cm)</span>
+                                <div class="text-[10px] text-emerald-500">損耗 <input type="number" id="loss-wall" value="0" class="w-8 bg-transparent font-bold" oninput="updateAll()">%</div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 mb-2">
+                                <input type="number" id="tile-w-w" value="30" class="border rounded p-1 text-xs" title="寬" oninput="updateAll()">
+                                <input type="number" id="tile-w-h" value="60" class="border rounded p-1 text-xs" title="高" oninput="updateAll()">
+                                <input type="number" id="tile-w-j" value="0.2" step="0.1" class="border rounded p-1 text-xs" title="縫" oninput="updateAll()">
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label class="text-[10px] text-emerald-600 font-bold">牆面高</label>
+                                <input type="number" id="wall-height" value="240" class="text-[10px] border rounded p-1 w-full" oninput="updateAll()">
+                            </div>
+                            <div class="flex items-center gap-2 mt-2">
+                                <label class="text-[10px] text-emerald-600 font-bold">交丁比例</label>
+                                <select id="layout-wall" class="text-[10px] border rounded p-1 w-full" onchange="updateAll()">
+                                    <option value="1">對縫 (1/1)</option>
+                                    <option value="0.5">半對 (1/2)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel p-4 border-t-4 border-blue-500">
+                    <h3 class="font-bold text-slate-800 mb-3 text-sm flex items-center justify-between">
+                        起磚點座標 (cm)
+                        <span id="coord-type-label" class="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded">地坪平面</span>
+                    </h3>
+                    <div id="origin-controls" class="space-y-3"></div>
+                </div>
+
+                <div class="panel p-4 border-t-4 border-amber-500">
+                    <h3 class="font-bold text-slate-800 mb-2 flex items-center justify-between text-sm">
+                        門窗開口 (cm)
+                        <button onclick="addOpening()" class="bg-amber-500 text-white text-[10px] px-2 py-1 rounded hover:bg-amber-600 transition-colors">+ 新增</button>
+                    </h3>
+                    <div id="opening-list" class="space-y-2 max-h-[150px] overflow-y-auto pr-1"></div>
+                </div>
+
+                <div class="panel p-4">
+                    <h3 class="font-bold text-slate-800 mb-2 text-sm flex justify-between items-center">
+                        空間邊界 (座標點)
+                        <button onclick="addNewPoint()" class="bg-blue-600 text-white text-[10px] px-2 py-1 rounded hover:bg-blue-700 transition-colors">+ 手動新增點位</button>
+                    </h3>
+                    <div class="flex gap-2 mb-2">
+                        <button onclick="toggleDrawMode()" id="btn-draw-mode" class="flex-1 bg-slate-100 text-[10px] py-2 rounded font-bold hover:bg-slate-200">重新繪製</button>
+                        <button onclick="toggleOrtho()" id="btn-ortho" class="flex-1 bg-slate-100 text-[10px] py-2 rounded font-bold">正交模式</button>
+                    </div>
+                    <div id="points-list" class="space-y-1.5 max-h-[140px] overflow-y-auto pr-1"></div>
+                </div>
+            </div>
+
+            <!-- 右側繪圖區 -->
+            <div class="lg:col-span-9 space-y-4">
+                <div class="flex border-b border-slate-200 bg-white rounded-t-2xl px-2 gap-1 overflow-x-auto" id="tabs-header"></div>
+                
+                <div id="capture-area" class="panel p-4 canvas-bg min-h-[500px] flex flex-col items-center justify-center relative bg-white">
+                    <div id="view-title" class="absolute top-4 left-4 text-slate-800 font-black bg-white/90 px-3 py-1 rounded shadow-sm z-10 border text-xs tracking-wider"></div>
+                    
+                    <canvas id="mainCanvas" width="850" height="480" class="shadow-2xl bg-white"></canvas>
+                    
+                    <div id="pdf-footer-data" class="hidden mt-6 w-full grid grid-cols-5 gap-3 border-t pt-4 bg-white">
+                        <div class="text-center"><p class="text-[9px] text-slate-400 font-bold uppercase">淨面積</p><p class="text-lg font-black"><span id="pdf-area">0</span> m²</p></div>
+                        <div class="text-center"><p class="text-[9px] text-blue-400 font-bold uppercase">理論數</p><p class="text-lg font-black"><span id="pdf-theory">0</span></p></div>
+                        <div class="text-center"><p class="text-[9px] text-emerald-500 font-bold uppercase">預估量</p><p class="text-lg font-black"><span id="pdf-count">0</span></p></div>
+                        <div class="text-center"><p class="text-[9px] text-amber-500 font-bold uppercase">損耗</p><p class="text-lg font-black text-amber-600"><span id="pdf-loss-pct">0%</span></p></div>
+                        <div class="text-center"><p class="text-[9px] text-slate-400 font-bold uppercase">整/半</p><p class="text-lg font-black text-slate-900"><span id="pdf-full">0</span> / <span id="pdf-half">0</span></p></div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div class="panel p-3 border-l-4 border-slate-300">
+                        <p class="text-[10px] font-bold text-slate-400 tracking-tight">當前淨面積 m²</p>
+                        <p class="text-xl font-black" id="stat-area">0</p>
+                    </div>
+                    <div class="panel p-3 border-l-4 border-blue-400">
+                        <p class="text-[10px] font-bold text-blue-400 tracking-tight">當前理論片數</p>
+                        <p class="text-xl font-black" id="stat-theory">0</p>
+                    </div>
+                    <div class="panel p-3 border-l-4 border-emerald-500">
+                        <p class="text-[10px] font-bold text-emerald-500 tracking-tight">當前預估量</p>
+                        <p class="text-xl font-black" id="stat-count">0</p>
+                    </div>
+                    <div class="panel p-3 border-l-4 border-amber-400">
+                        <p class="text-[10px] font-bold text-amber-500 tracking-tight">當前實際損耗 %</p>
+                        <p class="text-xl font-black text-amber-600" id="stat-loss-pct">0%</p>
+                    </div>
+                    <div class="panel p-3 bg-slate-900 text-white flex justify-around items-center">
+                        <div class="text-center">
+                            <p class="text-[9px] text-slate-400 uppercase">整磚</p>
+                            <p class="text-lg font-black text-blue-400" id="stat-full">0</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-[9px] text-slate-400 uppercase">≤半磚</p>
+                            <p class="text-lg font-black text-amber-400" id="stat-half">0</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="pdf-header-template" class="p-20 bg-white w-[1122px] text-slate-900">
+        <div class="flex justify-between items-start mb-12">
+            <div>
+                <h1 class="text-6xl font-black tracking-tighter mb-4">磁磚工程放樣報告</h1>
+                <p class="text-slate-400 font-bold uppercase tracking-widest border-l-4 border-blue-600 pl-4">Tile Project Pro v8.9 Report</p>
+            </div>
+            <div class="text-right">
+                <p class="text-sm font-bold text-slate-400 uppercase">施工位置</p>
+                <p class="text-4xl font-black text-blue-600" id="tpl-work-location">未命名</p>
+                <p class="text-sm text-slate-400 mt-2 italic" id="tpl-date"></p>
+            </div>
+        </div>
+        <div class="grid grid-cols-2 gap-16 mt-20">
+            <div class="bg-slate-50 p-12 rounded-[40px] border border-slate-100">
+                <h2 class="text-2xl font-black text-slate-800 mb-10 flex justify-between">地磚總結 <span class="text-blue-500">FLOOR</span></h2>
+                <div class="grid grid-cols-2 gap-8 mb-4">
+                    <div><p class="text-xs font-bold text-slate-400 mb-2 uppercase">總淨面積</p><p class="text-5xl font-black text-slate-800"><span id="tpl-f-area">0.00</span> <small class="text-lg">m²</small></p></div>
+                    <div class="text-right"><p class="text-xs font-bold text-slate-400 mb-2 uppercase">預估總量</p><p class="text-5xl font-black text-blue-600"><span id="tpl-f-count">0</span> <small class="text-lg">片</small></p></div>
+                </div>
+                <div class="border-t pt-4">
+                    <p class="text-xs font-bold text-slate-400 uppercase">實際總損耗率</p>
+                    <p class="text-2xl font-black text-amber-600" id="tpl-f-loss">0.0%</p>
+                </div>
+            </div>
+            <div class="bg-slate-50 p-12 rounded-[40px] border border-slate-100">
+                <h2 class="text-2xl font-black text-slate-800 mb-10 flex justify-between">壁磚總結 <span class="text-emerald-500">WALL</span></h2>
+                <div class="grid grid-cols-2 gap-8 mb-4">
+                    <div><p class="text-xs font-bold text-slate-400 mb-2 uppercase">總淨面積</p><p class="text-5xl font-black text-slate-800"><span id="tpl-w-area">0.00</span> <small class="text-lg">m²</small></p></div>
+                    <div class="text-right"><p class="text-xs font-bold text-slate-400 mb-2 uppercase">預估總量</p><p class="text-5xl font-black text-emerald-600"><span id="tpl-w-count">0</span> <small class="text-lg">片</small></p></div>
+                </div>
+                <div class="border-t pt-4">
+                    <p class="text-xs font-bold text-slate-400 uppercase">實際總損耗率</p>
+                    <p class="text-2xl font-black text-amber-600" id="tpl-w-loss">0.0%</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let points = [{x: 0, y: 0}, {x: 300, y: 0}, {x: 300, y: 200}, {x: 0, y: 200}];
+        let activeTab = 'floor';
+        let OFFSET = { x: 275, y: 140 };
+        
+        let floorOrigin = { x: 0.0, y: 0.0 }; 
+        let wallOrigins = {}; 
+        let wallOpenings = {}; 
+        let viewStats = {}; 
+        
+        let isDrawingMode = false;
+        let isOrtho = false;
+        let tempPoints = [];
+        let mousePos = { x: 0, y: 0 };
+        let draggedPointIdx = -1;
+
+        function toCanvas(pt) { return { x: pt.x + OFFSET.x, y: pt.y + OFFSET.y }; }
+        function fromCanvas(pt) { return { x: pt.x - OFFSET.x, y: pt.y - OFFSET.y }; }
+
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            const raw = fromCanvas({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            if (isDrawingMode && tempPoints.length > 0) {
+                const last = tempPoints[tempPoints.length - 1];
+                if(isOrtho) {
+                    const dx = Math.abs(raw.x - last.x), dy = Math.abs(raw.y - last.y);
+                    mousePos = dx > dy ? { x: raw.x, y: last.y } : { x: last.x, y: raw.y };
+                } else mousePos = raw;
+            } else mousePos = raw;
+            
+            if (draggedPointIdx !== -1) { 
+                points[draggedPointIdx] = { ...mousePos }; 
+                updateAll(); 
+            }
+            if (isDrawingMode) updateAll();
+        });
+
+        canvas.addEventListener('mousedown', e => {
+            const rect = canvas.getBoundingClientRect();
+            const rawRaw = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            if (isDrawingMode) {
+                if (e.button === 2) { 
+                    if (tempPoints.length > 2) { points = [...tempPoints]; finishDrawing(); } 
+                    return; 
+                }
+                if (tempPoints.length === 0) { OFFSET = { x: rawRaw.x, y: rawRaw.y }; tempPoints.push({x: 0, y: 0}); }
+                else tempPoints.push({...mousePos});
+                updateAll();
+            } else if (activeTab === 'floor') {
+                const hit = points.findIndex((p) => Math.hypot(toCanvas(p).x - rawRaw.x, toCanvas(p).y - rawRaw.y) < 15);
+                if (hit !== -1) draggedPointIdx = hit;
+            }
+        });
+
+        window.addEventListener('mouseup', () => draggedPointIdx = -1);
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        function toggleDrawMode() { isDrawingMode = !isDrawingMode; tempPoints = []; updateAll(); }
+        function toggleOrtho() { isOrtho = !isOrtho; document.getElementById('btn-ortho').classList.toggle('ortho-active', isOrtho); }
+        function finishDrawing() { isDrawingMode = false; activeTab = 'floor'; updateAll(); }
+
+        function addNewPoint() {
+            const lastPoint = points[points.length - 1];
+            points.push({ x: lastPoint.x + 20, y: lastPoint.y + 20 });
+            updateAll();
+        }
+
+        function removePoint(idx) {
+            if (points.length <= 3) return;
+            points.splice(idx, 1);
+            if (typeof activeTab === 'number' && activeTab >= points.length) activeTab = 'floor';
+            updateAll();
+        }
+
+        function addOpening() {
+            if(activeTab === 'floor') return;
+            if(!wallOpenings[activeTab]) wallOpenings[activeTab] = [];
+            wallOpenings[activeTab].push({ w: 90, h: 210, left: 20, bottom: 0 });
+            updateAll();
+        }
+
+        function deleteOpening(idx) { wallOpenings[activeTab].splice(idx, 1); updateAll(); }
+
+        function isPointInPoly(pt, poly) {
+            let inside = false;
+            for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+                if (((poly[i].y > pt.y) !== (poly[j].y > pt.y)) && (pt.x < (poly[j].x - poly[i].x) * (pt.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)) inside = !inside;
+            }
+            return inside;
+        }
+
+        function getTileAreaStats(rect, poly, openings = []) {
+            let insideCount = 0;
+            const grid = 6; 
+            const totalSamples = grid * grid;
+            for(let i=0; i<grid; i++) {
+                for(let j=0; j<grid; j++) {
+                    const pt = { x: rect.x + rect.w * ((i + 0.5) / grid), y: rect.y + rect.h * ((j + 0.5) / grid) };
+                    let inOpening = false;
+                    for(const op of openings) { if(pt.x >= op.left && pt.x <= op.left+op.w && pt.y >= op.bottom && pt.y <= op.bottom+op.h) { inOpening = true; break; } }
+                    if(!inOpening && isPointInPoly(pt, poly)) insideCount++;
+                }
+            }
+            const ratio = insideCount / totalSamples;
+            return { ratio, isFull: ratio > 0.49, isHalf: ratio > 0.05 && ratio <= 0.49 };
+        }
+
+        // 修改：調整標註與線段錯開的邏輯
+        function drawDimensionLabel(ctx, text, x, y, isWallView = false, posType = "") {
+            ctx.save();
+            if(isWallView) ctx.scale(1, -1); 
+            
+            // 根據位置類型（左邊、右邊、頂部、底部）增加位移量，讓標籤與黑色邊緣線段錯開
+            let offsetX = 0, offsetY = 0;
+            const shift = 8; // 偏移量（像素）
+            
+            if (posType === "left") offsetX = shift;
+            else if (posType === "right") offsetX = -shift;
+            else if (posType === "top") offsetY = shift;
+            else if (posType === "bottom") offsetY = -shift;
+
+            const finalX = x + offsetX;
+            const finalY = (isWallView ? -y : y) + offsetY;
+
+            const padding = 2;
+            ctx.font = "bold 9px Inter, sans-serif";
+            const metrics = ctx.measureText(text);
+            const w = metrics.width + padding * 4;
+            const h = 12;
+            
+            ctx.fillStyle = "rgba(15, 23, 42, 0.85)"; 
+            ctx.beginPath(); 
+            ctx.roundRect(finalX - w/2, finalY - h/2, w, h, 2); 
+            ctx.fill();
+            
+            ctx.fillStyle = "white"; 
+            ctx.textAlign = "center"; 
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, finalX, finalY);
+            ctx.restore();
+        }
+
+        function drawPointMarker(ctx, label, x, y, color = '#3b82f6') {
+            ctx.save();
+            ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = 'white'; ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.fillStyle = 'white'; ctx.font = "bold 9px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(label, x, y);
+            ctx.restore();
+        }
+
+        function drawFloorView() {
+            const tw = parseFloat(document.getElementById('tile-f-w')?.value || 60);
+            const th = parseFloat(document.getElementById('tile-f-h')?.value || 60);
+            const joint = parseFloat(document.getElementById('tile-f-j')?.value || 0.3);
+            const bond = parseFloat(document.getElementById('layout-floor')?.value || 1);
+            const unitW = tw + joint, unitH = th + joint;
+            const baseP = { x: floorOrigin.x, y: floorOrigin.y };
+            
+            const minX = Math.min(...points.map(p=>p.x)), maxX = Math.max(...points.map(p=>p.x));
+            const minY = Math.min(...points.map(p=>p.y)), maxY = Math.max(...points.map(p=>p.y));
+            const scanMinX = minX - unitW, scanMaxX = maxX + unitW, scanMinY = minY - unitH, scanMaxY = maxY + unitH;
+            
+            let stats = { full: 0, half: 0 }, count = 1;
+            const startY = baseP.y - Math.ceil((baseP.y - scanMinY) / unitH) * unitH;
+            let gridTiles = [];
+
+            for (let y = startY; y <= scanMaxY; y += unitH) {
+                const rowIndex = Math.round((y - baseP.y) / unitH);
+                let xOffset = (bond < 1) ? (rowIndex % Math.round(1/bond)) * (unitW * bond) : 0;
+                const rowStartX = (baseP.x + xOffset) - Math.ceil(((baseP.x + xOffset) - scanMinX) / unitW) * unitW;
+                let row = [];
+                for (let x = rowStartX; x <= scanMaxX; x += unitW) {
+                    const res = getTileAreaStats({x, y, w: tw, h: th}, points);
+                    if (res.ratio > 0.05) {
+                        const cp = toCanvas({x, y});
+                        if(res.isFull) stats.full++; else if(res.isHalf) stats.half++;
+                        ctx.strokeStyle = '#e2e8f0'; ctx.fillStyle = res.isFull ? '#ffffff' : '#fff7ed';
+                        ctx.fillRect(cp.x, cp.y, tw, th); ctx.strokeRect(cp.x, cp.y, tw, th);
+                        ctx.fillStyle = '#94a3b8'; ctx.font = "8px sans-serif"; ctx.fillText(count++, cp.x + 2, cp.y + 10);
+                        row.push({x, y, cp, res});
+                    } else row.push(null);
+                }
+                gridTiles.push(row);
+            }
+
+            gridTiles.forEach((row, rIdx) => {
+                row.forEach((tile, cIdx) => {
+                    if(!tile) return;
+                    const isLeft = (cIdx === 0 || row[cIdx-1] === null), isRight = (cIdx === row.length - 1 || row[cIdx+1] === null);
+                    if(isLeft || isRight) {
+                        const actualW = Math.min(maxX, tile.x + tw) - Math.max(minX, tile.x);
+                        if(actualW > 1 && actualW < tw * 0.98) {
+                            drawDimensionLabel(ctx, `${actualW.toFixed(1)}`, tile.cp.x + (isLeft ? actualW/2 : tw - actualW/2), tile.cp.y + th/2, false, isLeft ? "left" : "right");
+                        }
+                    }
+                    const isTop = (rIdx === 0 || gridTiles[rIdx-1][cIdx] === null), isBot = (rIdx === gridTiles.length - 1 || gridTiles[rIdx+1][cIdx] === null);
+                    if(isTop || isBot) {
+                        const actualH = Math.min(maxY, tile.y + th) - Math.max(minY, tile.y);
+                        if(actualH > 1 && actualH < th * 0.98) {
+                            drawDimensionLabel(ctx, `${actualH.toFixed(1)}`, tile.cp.x + tw/2, tile.cp.y + (isTop ? actualH/2 : th - actualH/2), false, isTop ? "top" : "bottom");
+                        }
+                    }
+                });
+            });
+            
+            points.forEach((p, i) => {
+                const pNext = points[(i + 1) % points.length], cp1 = toCanvas(p), cp2 = toCanvas(pNext);
+                ctx.beginPath(); ctx.setLineDash([]); ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2; ctx.moveTo(cp1.x, cp1.y); ctx.lineTo(cp2.x, cp2.y); ctx.stroke();
+                const midX = (cp1.x + cp2.x) / 2, midY = (cp1.y + cp2.y) / 2;
+                const dist = Math.hypot(pNext.x - p.x, pNext.y - p.y), angle = Math.atan2(cp2.y - cp1.y, cp2.x - cp1.x);
+                ctx.fillStyle = 'white'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(midX, midY, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#1e40af'; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(`W${i+1}`, midX, midY);
+                ctx.save(); ctx.translate(midX, midY);
+                let textAngle = angle; if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
+                ctx.rotate(textAngle); ctx.fillStyle = '#ef4444'; ctx.font = "bold 9px sans-serif"; ctx.fillText(`${Math.round(dist)}cm`, 0, 22); ctx.restore();
+                drawPointMarker(ctx, `P${i+1}`, cp1.x, cp1.y);
+            });
+
+            const originCp = toCanvas(baseP);
+            ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(originCp.x, originCp.y, 6, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
+            return stats;
+        }
+
+        function drawWallView(idx) {
+            const p1 = points[idx], pNext = points[(idx + 1) % points.length], len = Math.hypot(pNext.x - p1.x, pNext.y - p1.y);
+            const wallH = parseFloat(document.getElementById('wall-height')?.value || 240);
+            const tw = parseFloat(document.getElementById('tile-w-w')?.value || 30), th = parseFloat(document.getElementById('tile-w-h')?.value || 60), joint = parseFloat(document.getElementById('tile-w-j')?.value || 0.2);
+            const bond = parseFloat(document.getElementById('layout-wall')?.value || 1);
+            const unitW = tw + joint, unitH = th + joint;
+            const ops = wallOpenings[idx] || [];
+            const origin = wallOrigins[idx] || { x: 0, z: 0 };
+
+            ctx.save(); ctx.translate(canvas.width/2 - len/2, canvas.height/2 + wallH/2); ctx.scale(1, -1);
+            const wallPoly = [{x:0,y:0}, {x:len,y:0}, {x:len,y:wallH}, {x:0,y:wallH}];
+            let stats = { full: 0, half: 0 }, count = 1;
+            const startX = origin.x - Math.ceil(origin.x / unitW) * unitW;
+            const startY = origin.z - Math.ceil(origin.z / unitH) * unitH;
+
+            let grid = [];
+            for (let y = startY; y < wallH + unitH; y += unitH) {
+                const rowIndex = Math.round((y - origin.z) / unitH);
+                let xRowOffset = (bond < 1) ? (rowIndex % Math.round(1/bond)) * (unitW * bond) : 0;
+                let rowTiles = [];
+                for (let x = startX + xRowOffset; x < len + unitW; x += unitW) {
+                    const res = getTileAreaStats({ x, y, w: tw, h: th }, wallPoly, ops);
+                    if (res.ratio > 0.05) rowTiles.push({ x, y, res }); else rowTiles.push(null);
+                }
+                grid.push(rowTiles);
+            }
+
+            grid.forEach((row, rIdx) => {
+                row.forEach((tile, tileIdx) => {
+                    if(!tile) return;
+                    const { x, y, res } = tile;
+                    if(res.isFull) stats.full++; else if(res.isHalf) stats.half++;
+                    ctx.strokeStyle = '#cbd5e1'; ctx.fillStyle = res.isFull ? '#ffffff' : '#f0fdf4';
+                    ctx.fillRect(x, y, tw, th); ctx.strokeRect(x, y, tw, th);
+                    ctx.save(); ctx.scale(1, -1); ctx.fillStyle = '#94a3b8'; ctx.font = "8px sans-serif"; ctx.fillText(count++, x + 2, -(y + th - 10)); ctx.restore();
+                    const isL = (tileIdx === 0 || row[tileIdx-1] === null), isR = (tileIdx === row.length - 1 || row[tileIdx+1] === null);
+                    if (isL || isR) {
+                        const actW = Math.min(len, x + tw) - Math.max(0, x);
+                        if (actW > 1 && actW < tw * 0.98) {
+                            drawDimensionLabel(ctx, `${actW.toFixed(1)}`, Math.max(0, x) + (isL ? actW/2 : tw - actW/2), y + th/2, true, isL ? "left" : "right");
+                        }
+                    }
+                    const isB = (rIdx === 0 || grid[rIdx-1][tileIdx] === null), isT = (rIdx === grid.length - 1 || grid[rIdx+1][tileIdx] === null);
+                    if (isB || isT) {
+                        const actH = Math.min(wallH, y + th) - Math.max(0, y);
+                        if (actH > 1 && actH < th * 0.98) {
+                            drawDimensionLabel(ctx, `${actH.toFixed(1)}`, x + tw/2, Math.max(0, y) + (isB ? actH/2 : th - actH/2), true, isB ? "top" : "bottom");
+                        }
+                    }
+                });
+            });
+            ops.forEach(op => {
+                ctx.fillStyle = 'rgba(100, 116, 139, 0.4)'; ctx.fillRect(op.left, op.bottom, op.w, op.h);
+                ctx.strokeStyle = '#64748b'; ctx.setLineDash([5, 5]); ctx.lineWidth = 1; ctx.strokeRect(op.left, op.bottom, op.w, op.h);
+            });
+            ctx.setLineDash([]); ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2; ctx.strokeRect(0, 0, len, wallH);
+            ctx.scale(1, -1); drawPointMarker(ctx, `P${idx+1}`, 0, 15, '#10b981'); drawPointMarker(ctx, `P${((idx+1)%points.length)+1}`, len, 15, '#10b981'); ctx.scale(1, -1);
+            ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(origin.x, origin.z, 5, 0, Math.PI*2); ctx.fill();
+            ctx.restore(); return stats;
+        }
+
+        function updateAll() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            let stats = { full: 0, half: 0 }, area = 0, theory = 0;
+            const fw = parseFloat(document.getElementById('tile-f-w').value), fh = parseFloat(document.getElementById('tile-f-h').value), fj = parseFloat(document.getElementById('tile-f-j').value);
+            const ww = parseFloat(document.getElementById('tile-w-w').value), wh = parseFloat(document.getElementById('tile-w-h').value), wj = parseFloat(document.getElementById('tile-w-j').value);
+            const lossF = 1 + (parseFloat(document.getElementById('loss-floor').value)/100), lossW = 1 + (parseFloat(document.getElementById('loss-wall').value)/100);
+
+            if (isDrawingMode) {
+                ctx.beginPath(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2;
+                tempPoints.forEach((p,i)=> i===0?ctx.moveTo(toCanvas(p).x,toCanvas(p).y):ctx.lineTo(toCanvas(p).x,toCanvas(p).y));
+                if(tempPoints.length > 0) ctx.lineTo(toCanvas(mousePos).x, toCanvas(mousePos).y);
+                ctx.stroke();
+                document.getElementById('view-title').innerText = "繪製邊界模式";
+            } else if (activeTab === 'floor') {
+                stats = drawFloorView(); 
+                let a = 0; for(let i=0;i<points.length;i++){let j=(i+1)%points.length; a+=points[i].x*points[j].y; a-=points[j].x*points[i].y;}
+                area = Math.abs(a)/20000; theory = area / ((fw+fj)*(fh+fj)/10000);
+                document.getElementById('view-title').innerText = "地坪平面圖 (座標點標記 P1-P" + points.length + ")";
+            } else {
+                stats = drawWallView(activeTab); 
+                const p1 = points[activeTab], pNext = points[(activeTab + 1) % points.length], len = Math.hypot(pNext.x - p1.x, pNext.y - p1.y);
+                const wallH = parseFloat(document.getElementById('wall-height').value);
+                let wallArea = (len * wallH);
+                (wallOpenings[activeTab] || []).forEach(op => wallArea -= (op.w * op.h));
+                area = wallArea / 10000; theory = area / ((ww+wj)*(wh+wj)/10000);
+                document.getElementById('view-title').innerText = `牆面 W${activeTab + 1} 立面圖 (點 P${activeTab+1} 至 P${((activeTab+1)%points.length)+1})`;
+            }
+
+            if(!isDrawingMode) {
+                const est = Math.ceil((stats.full + stats.half * 0.5) * (activeTab==='floor'?lossF:lossW));
+                const lossPct = theory > 0 ? (((est / theory) - 1) * 100).toFixed(1) : "0";
+                document.getElementById('stat-area').innerText = area.toFixed(2);
+                document.getElementById('stat-theory').innerText = theory.toFixed(1);
+                document.getElementById('stat-count').innerText = est;
+                document.getElementById('stat-loss-pct').innerText = lossPct + "%";
+                document.getElementById('stat-full').innerText = stats.full;
+                document.getElementById('stat-half').innerText = stats.half;
+                
+                document.getElementById('pdf-area').innerText = area.toFixed(2);
+                document.getElementById('pdf-theory').innerText = theory.toFixed(1);
+                document.getElementById('pdf-count').innerText = est;
+                document.getElementById('pdf-loss-pct').innerText = lossPct + "%";
+                document.getElementById('pdf-full').innerText = stats.full;
+                document.getElementById('pdf-half').innerText = stats.half;
+
+                viewStats[activeTab] = { ...stats, area, theory, est, lossPct };
+                renderTabs(); renderOriginControls(); renderOpenings(); renderPointList(); calculateGrand(); 
+            }
+        }
+
+        function renderOriginControls() {
+            const container = document.getElementById('origin-controls');
+            const label = document.getElementById('coord-type-label');
+            if (activeTab === 'floor') {
+                label.innerText = "地坪平面 (X, Y)";
+                label.className = "text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded";
+                container.innerHTML = `<div class="grid grid-cols-2 gap-4">
+                    <div><label class="text-[10px] block mb-1">起磚 X (cm)</label>
+                        <input type="number" step="0.1" value="${floorOrigin.x}" 
+                        class="w-full border rounded p-1.5 text-xs font-bold" 
+                        oninput="if(!this.value.endsWith('.')) { floorOrigin.x=parseFloat(this.value)||0; updateAll(); }">
+                    </div>
+                    <div><label class="text-[10px] block mb-1">起磚 Y (cm)</label>
+                        <input type="number" step="0.1" value="${floorOrigin.y}" 
+                        class="w-full border rounded p-1.5 text-xs font-bold" 
+                        oninput="if(!this.value.endsWith('.')) { floorOrigin.y=parseFloat(this.value)||0; updateAll(); }">
+                    </div>
+                </div>`;
+            } else {
+                label.innerText = `牆面 W${activeTab + 1} (X, Z)`;
+                label.className = "text-[10px] bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded";
+                const ori = wallOrigins[activeTab] || { x: 0.0, z: 0.0 };
+                container.innerHTML = `<div class="grid grid-cols-2 gap-4">
+                    <div><label class="text-[10px] block mb-1">水平 X (cm)</label>
+                        <input type="number" step="0.1" value="${ori.x}" 
+                        class="w-full border rounded p-1.5 text-xs font-bold" 
+                        oninput="if(!this.value.endsWith('.')) { setWallOrigin('x', this.value); }">
+                    </div>
+                    <div><label class="text-[10px] block mb-1">垂直 Z (cm)</label>
+                        <input type="number" step="0.1" value="${ori.z}" 
+                        class="w-full border rounded p-1.5 text-xs font-bold" 
+                        oninput="if(!this.value.endsWith('.')) { setWallOrigin('z', this.value); }">
+                    </div>
+                </div>`;
+            }
+        }
+
+        function setWallOrigin(axis, val) {
+            if (!wallOrigins[activeTab]) wallOrigins[activeTab] = { x: 0.0, z: 0.0 };
+            wallOrigins[activeTab][axis] = parseFloat(val) || 0;
+            updateAll();
+        }
+
+        function renderOpenings() {
+            const container = document.getElementById('opening-list');
+            if(activeTab === 'floor') { container.innerHTML = '<p class="text-[10px] text-slate-400 text-center py-4 italic">地坪不支援開口扣除</p>'; return; }
+            const ops = wallOpenings[activeTab] || [];
+            if(ops.length === 0) { container.innerHTML = '<p class="text-[10px] text-slate-400 text-center py-4 italic">無開口設定</p>'; return; }
+            container.innerHTML = ops.map((op, i) => `
+                <div class="bg-slate-50 p-2 rounded border text-[10px] relative">
+                    <div class="grid grid-cols-2 gap-2 mb-1">
+                        <div>寬 <input type="number" step="0.1" value="${op.w}" class="w-12 border rounded px-1" oninput="wallOpenings[activeTab][${i}].w=parseFloat(this.value)||0;updateAll()"></div>
+                        <div>高 <input type="number" step="0.1" value="${op.h}" class="w-12 border rounded px-1" oninput="wallOpenings[activeTab][${i}].h=parseFloat(this.value)||0;updateAll()"></div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>左 <input type="number" step="0.1" value="${op.left}" class="w-12 border rounded px-1" oninput="wallOpenings[activeTab][${i}].left=parseFloat(this.value)||0;updateAll()"></div>
+                        <div>底 <input type="number" step="0.1" value="${op.bottom}" class="w-12 border rounded px-1" oninput="wallOpenings[activeTab][${i}].bottom=parseFloat(this.value)||0;updateAll()"></div>
+                    </div>
+                    <button onclick="deleteOpening(${i})" class="absolute top-1 right-1 text-red-400 hover:text-red-600">×</button>
+                </div>`).join('');
+        }
+
+        function renderTabs() {
+            const h = document.getElementById('tabs-header');
+            let tabs = `<button onclick="activeTab='floor'; updateAll()" class="px-5 py-2 text-xs font-bold whitespace-nowrap transition-all ${activeTab==='floor'?'tab-active':'text-slate-400 hover:bg-slate-50'}">地坪平面</button>`;
+            points.forEach((_,i)=> tabs += `<button onclick="activeTab=${i}; updateAll()" class="px-5 py-2 text-xs font-bold whitespace-nowrap transition-all ${activeTab===i?'tab-active':'text-slate-400 hover:bg-slate-50'}">牆 W${i+1}</button>`);
+            h.innerHTML = tabs;
+        }
+
+        function renderPointList() {
+            document.getElementById('points-list').innerHTML = points.map((p, i) => `
+                <div class="flex items-center gap-2 bg-slate-50 p-1 rounded border text-[10px]">
+                    <span class="w-4 font-black text-blue-500">P${i+1}</span>
+                    <input type="number" step="0.1" value="${p.x}" class="w-full border rounded px-1 font-mono" oninput="if(!this.value.endsWith('.')){points[${i}].x=parseFloat(this.value)||0;updateAll()}">
+                    <input type="number" step="0.1" value="${p.y}" class="w-full border rounded px-1 font-mono" oninput="if(!this.value.endsWith('.')){points[${i}].y=parseFloat(this.value)||0;updateAll()}">
+                    <button onclick="removePoint(${i})" class="text-red-400 hover:text-red-600 px-1 font-bold">×</button>
+                </div>`).join('');
+        }
+
+        function calculateGrand() {
+            const f = viewStats['floor'] || {est:0, area:0, theory: 0};
+            const floorLossPct = f.theory > 0 ? (((f.est / f.theory) - 1) * 100).toFixed(1) : "0";
+            document.getElementById('header-floor-area').innerText = f.area.toFixed(2);
+            document.getElementById('header-floor-loss').innerText = floorLossPct + "%";
+            document.getElementById('grand-floor-count').innerText = f.est;
+            let totalWallArea = 0, totalWallTheory = 0, totalWallEst = 0;
+            points.forEach((_, i) => { 
+                const s = viewStats[i] || {est:0, area:0, theory: 0};
+                totalWallArea += s.area; totalWallTheory += s.theory; totalWallEst += s.est;
+            });
+            const wallLossPct = totalWallTheory > 0 ? (((totalWallEst / totalWallTheory) - 1) * 100).toFixed(1) : "0";
+            document.getElementById('header-wall-area').innerText = totalWallArea.toFixed(2);
+            document.getElementById('header-wall-loss').innerText = wallLossPct + "%";
+            document.getElementById('grand-wall-count').innerText = totalWallEst;
+            return { floorLossPct, wallLossPct };
+        }
+
+        async function exportFullPDF() {
+            const btn = document.getElementById('btn-pdf');
+            btn.disabled = true; document.getElementById('pdf-text').innerText = "處理中...";
+            const { jsPDF } = window.jspdf; const doc = new jsPDF('l', 'mm', 'a4');
+            const originalTab = activeTab;
+            const header = document.getElementById('pdf-header-template');
+            header.style.display = 'block';
+            document.getElementById('tpl-work-location').innerText = document.getElementById('header-work-location').value || "未命名";
+            document.getElementById('tpl-date').innerText = "產出日期：" + new Date().toLocaleString();
+            const { floorLossPct, wallLossPct } = calculateGrand();
+            const f = viewStats['floor'] || {est:0, area:0};
+            document.getElementById('tpl-f-area').innerText = f.area.toFixed(2);
+            document.getElementById('tpl-f-count').innerText = f.est;
+            document.getElementById('tpl-f-loss').innerText = floorLossPct + "%";
+            let wEst = 0, wArea = 0;
+            points.forEach((_, i) => { const s = viewStats[i] || {est:0, area:0}; wEst += s.est; wArea += s.area; });
+            document.getElementById('tpl-w-area').innerText = wArea.toFixed(2);
+            document.getElementById('tpl-w-count').innerText = wEst;
+            document.getElementById('tpl-w-loss').innerText = wallLossPct + "%";
+            const coverCanvas = await html2canvas(header, { scale: 1.2 });
+            doc.addImage(coverCanvas.toDataURL('image/jpeg', 0.8), 'JPEG', 0, 0, 297, 210);
+            header.style.display = 'none';
+            const footerData = document.getElementById('pdf-footer-data');
+            footerData.classList.remove('hidden');
+            const captureArea = document.getElementById('capture-area');
+            const pages = ['floor', ...points.map((_, i) => i)];
+            for (const p of pages) {
+                activeTab = p; updateAll();
+                doc.addPage();
+                const canvasImg = await html2canvas(captureArea, { scale: 1.2 });
+                doc.addImage(canvasImg.toDataURL('image/jpeg', 0.7), 'JPEG', 0, 0, 297, 210);
+            }
+            footerData.classList.add('hidden');
+            activeTab = originalTab; updateAll();
+            doc.save(`磁磚放樣報告_${document.getElementById('header-work-location').value || 'new'}.pdf`);
+            btn.disabled = false; document.getElementById('pdf-text').innerText = "匯出 PDF 報告";
+        }
+
+        window.onload = updateAll;
+    </script>
+</body>
+</html>
